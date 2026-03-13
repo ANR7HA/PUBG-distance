@@ -6,24 +6,42 @@ import matplotlib.pyplot as plt
 def detect_markers(image, color, show_result=True):
     """
     检测图片中的黄色标记：空心圆（玩家）和大头针（标点）
-    优化版：提高识别准确率
     """
+
 
     original_image = image.copy()
 
+    # 2. 转换到HSV颜色空间
     hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-    if color == "1":
-        lower1 = np.array([25, 150, 180])
-        upper1 = np.array([35, 255, 255])
-        lower2 = np.array([15, 100, 150])
-        upper2 = np.array([40, 255, 255])
+    # 3. 定义HSV范围（根据战术地图的黄色调整）
+    """
+       根据颜色代码创建掩膜
+       color_code: 1=黄色, 2=橙色, 3=蓝色
+       黄色 (RGB: (233, 229, 17)):
+          OpenCV HSV: H=29, S=236, V=233
+          标准HSV: H=58.0°, S=92.5%, V=91.4%
+        橙色 (RGB: (218, 98, 38)):
+          OpenCV HSV: H=10, S=211, V=218
+          标准HSV: H=20.0°, S=82.7%, V=85.5%
+        蓝色 (RGB: (58, 160, 217)):
+          OpenCV HSV: H=101, S=187, V=217
+          标准HSV: H=202.0°, S=73.3%, V=85.1%
+       """
+    if color == "1":  # 黄色 (233, 229, 17) in BGR
+        # 黄色在HSV中大约为(60°, 100%, 91%)
+        # OpenCV的H范围是0-180，所以60°对应30
+        lower1 = np.array([29, 236, 233])  # 窄范围
+        upper1 = np.array([29, 236, 233])
+        lower2 = np.array([18, 130, 180])  # 宽范围
+        upper2 = np.array([32, 255, 255])
 
         mask1 = cv2.inRange(hsv_image, lower1, upper1)
         mask2 = cv2.inRange(hsv_image, lower2, upper2)
         mask = cv2.bitwise_or(mask1, mask2)
 
-    elif color == "2":
+    elif color == "2":  # 橙色 (218, 98, 38) in BGR
+        # 橙色在HSV中大约为(20°, 82%, 85%)
         lower1 = np.array([8, 100, 150])
         upper1 = np.array([15, 255, 255])
         lower2 = np.array([5, 80, 120])
@@ -33,7 +51,8 @@ def detect_markers(image, color, show_result=True):
         mask2 = cv2.inRange(hsv_image, lower2, upper2)
         mask = cv2.bitwise_or(mask1, mask2)
 
-    elif color == "3":
+    elif color == "3":  # 蓝色 (58, 160, 217) in BGR
+        # 蓝色在HSV中大约为(200°, 73%, 85%)
         lower1 = np.array([95, 120, 150])
         upper1 = np.array([110, 255, 255])
         lower2 = np.array([90, 100, 120])
@@ -43,44 +62,55 @@ def detect_markers(image, color, show_result=True):
         mask2 = cv2.inRange(hsv_image, lower2, upper2)
         mask = cv2.bitwise_or(mask1, mask2)
 
-    kernel = np.ones((5, 5), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    # 4. 形态学操作：去噪和强化标记
+    kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)  # 闭合小孔
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)  # 去除小点
+
+    # 可选：膨胀以连接可能的断点
     mask = cv2.dilate(mask, kernel, iterations=1)
 
+    # 5. 轮廓检测
     contours, hierarchy = cv2.findContours(
         mask,
-        cv2.RETR_EXTERNAL,
+        cv2.RETR_EXTERNAL,  # 只检测最外层轮廓
         cv2.CHAIN_APPROX_SIMPLE
     )
 
-    player_position = None
-    marker_position = None
-    player_contour = None
-    marker_contour = None
+    # 6. 分析轮廓
+    player_position = None  # 玩家位置（空心圆圆心）
+    marker_position = None  # 标点位置（大头针尖端）
 
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:10]
-
-    circle_contours = []
-    pin_contours = []
+    # 按面积排序，保留最大的2-3个轮廓（假设标记面积较大）
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:5]
 
     for contour in contours:
+        # 过滤太小的轮廓
         area = cv2.contourArea(contour)
-        if area < 50:
+        if area < 50:  # 面积阈值
             continue
 
+        # 计算轮廓特征
         perimeter = cv2.arcLength(contour, True)
         if perimeter == 0:
             continue
 
+        # 圆形度
         circularity = 4 * np.pi * area / (perimeter ** 2)
 
+        # 最小外接圆
         (x, y), radius = cv2.minEnclosingCircle(contour)
+        center = (int(x), int(y))
+        radius = int(radius)
 
+        # 凸包和凸性缺陷
         hull = cv2.convexHull(contour)
         hull_area = cv2.contourArea(hull)
+
+        # 面积与凸包面积比
         solidity = area / hull_area if hull_area > 0 else 0
 
+        # 宽高比
         rect = cv2.minAreaRect(contour)
         width, height = rect[1]
         if width > 0 and height > 0:
@@ -88,86 +118,69 @@ def detect_markers(image, color, show_result=True):
         else:
             aspect_ratio = 1
 
-        if circularity > 0.75 and solidity > 0.7:
-            circle_contours.append({
-                'contour': contour,
-                'circularity': circularity,
-                'area': area,
-                'solidity': solidity,
-                'aspect_ratio': aspect_ratio
-            })
+        # 区分空心圆和大头针
+        # 空心圆特征：圆形度高，轮廓相对规则
+        # 大头针特征：有明显尖端，通常下部较尖
+
+        if circularity > 0.86 :
+            # 更可能是圆形 - 玩家位置
+            # 计算精确圆心（通过图像矩）
+            M = cv2.moments(contour)
+            if M["m00"] != 0:
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
+                player_position = (cx, cy)
+
+                # 在图上标记
+                cv2.circle(original_image, (cx, cy), 5, (0, 255, 0), -1)  # 绿色圆心
+                cv2.circle(original_image, (cx, cy), radius, (0, 255, 0), 2)  # 绿色圆圈
+                cv2.putText(original_image, "Player", (cx - 20, cy - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
         else:
             y_coords = contour[:, 0, 1]
-            max_y = np.min(y_coords)
-            min_y = np.max(y_coords)
-            height_range = max_y - min_y
+            max_y = np.max(y_coords)
+            bottom_points = contour[contour[:, 0, 1] == max_y]
 
-            if height_range > 0:
-                bounding_rect = cv2.boundingRect(contour)
-                rect_width, rect_height = bounding_rect[2], bounding_rect[3]
-                if rect_height > 0:
-                    rect_aspect = rect_width / rect_height
+            if len(bottom_points) > 0:
+                # 取x坐标的平均值
+                bottom_x = int(np.mean(bottom_points[:, 0, 0]))
+                bottom_y = int(max_y)
+                tip_position = (bottom_x, bottom_y)
 
-                    if rect_aspect < 0.8 or circularity < 0.75:
-                        pin_contours.append({
-                            'contour': contour,
-                            'circularity': circularity,
-                            'area': area,
-                            'aspect_ratio': aspect_ratio,
-                            'height_range': height_range
-                        })
+                # 检查是否已经有标点位置，如果没有则使用
+                if marker_position is None:
+                    marker_position = tip_position
 
-    if circle_contours:
-        best_circle = max(circle_contours, key=lambda x: x['circularity'] * x['solidity'])
-        contour = best_circle['contour']
-        M = cv2.moments(contour)
-        if M["m00"] != 0:
-            cx = int(M["m10"] / M["m00"])
-            cy = int(M["m01"] / M["m00"])
-            player_position = (cx, cy)
-            player_contour = contour
+                    # 在图上标记
+                    cv2.circle(original_image, tip_position, 5, (0, 0, 255), -1)  # 红色尖端
+                    cv2.drawContours(original_image, [contour], -1, (0, 0, 255), 2)  # 红色轮廓
+                    cv2.putText(original_image, "Marker", (tip_position[0] - 20, tip_position[1] - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
-            (x, y), radius = cv2.minEnclosingCircle(contour)
-            cv2.circle(original_image, (cx, cy), 5, (0, 255, 0), -1)
-            cv2.circle(original_image, (cx, cy), int(radius), (0, 255, 0), 2)
-            cv2.putText(original_image, "Player", (cx - 20, cy - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-    if pin_contours:
-        best_pin = max(pin_contours, key=lambda x: x['area'])
-        contour = best_pin['contour']
 
-        y_coords = contour[:, 0, 1]
-        max_y = np.max(y_coords)
-        bottom_points = contour[contour[:, 0, 1] == max_y]
-
-        if len(bottom_points) > 0:
-            bottom_x = int(np.mean(bottom_points[:, 0, 0]))
-            bottom_y = int(max_y)
-            tip_position = (bottom_x, bottom_y)
-            marker_position = tip_position
-            marker_contour = contour
-
-            cv2.circle(original_image, tip_position, 5, (0, 0, 255), -1)
-            cv2.drawContours(original_image, [contour], -1, (0, 0, 255), 2)
-            cv2.putText(original_image, "Marker", (tip_position[0] - 20, tip_position[1] - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-
+    # 8. 结果显示
     if show_result:
+        # 创建显示窗口
         fig, axes = plt.subplots(2, 2, figsize=(15, 10))
 
+        # 原图
         axes[0, 0].imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         axes[0, 0].set_title('Original Image')
         axes[0, 0].axis('off')
 
+        # 黄色掩膜
         axes[0, 1].imshow(mask, cmap='gray')
         axes[0, 1].set_title('Mask')
         axes[0, 1].axis('off')
 
+        # 检测结果
         axes[1, 0].imshow(cv2.cvtColor(original_image, cv2.COLOR_BGR2RGB))
         axes[1, 0].set_title('Detection Result')
         axes[1, 0].axis('off')
 
+        # 轮廓图
         contour_img = np.zeros_like(image)
         cv2.drawContours(contour_img, contours, -1, (0, 255, 0), 2)
         axes[1, 1].imshow(cv2.cvtColor(contour_img, cv2.COLOR_BGR2RGB))

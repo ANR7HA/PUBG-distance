@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
-from pynput import keyboard, mouse
+import keyboard
 import threading
 import time
 import map_scale_api
@@ -152,31 +152,17 @@ class PUBGOverlayController:
         self.update_status_display()
 
     def setup_keyboard_listener(self):
-        """设置键盘监听 - 使用pynput全局钩子，可在游戏中使用"""
-        self.last_toggle_time = 0
-        self.toggle_cooldown = 0.5
+        """设置键盘监听"""
 
-        def on_press(key):
-            try:
-                current_time = time.time()
-                key_str = str(key).lower()
-                if key_str == "'m'" or key_str == "key.m":
-                    if current_time - self.last_toggle_time >= self.toggle_cooldown:
-                        self.last_toggle_time = current_time
-                        self.toggle_all_actions()
-            except Exception as e:
-                print(f"键盘监听错误: {e}")
+        def key_listener():
+            while True:
+                if keyboard.is_pressed('m'):
+                    self.toggle_all_actions()
+                    time.sleep(0.5)  # 防抖延迟
+                time.sleep(0.1)
 
-        listener_thread = threading.Thread(target=self._start_keyboard_listener, args=(on_press,), daemon=True)
+        listener_thread = threading.Thread(target=key_listener, daemon=True)
         listener_thread.start()
-
-    def _start_keyboard_listener(self, on_press_callback):
-        """启动键盘监听器"""
-        try:
-            with keyboard.Listener(on_press=on_press_callback) as listener:
-                listener.join()
-        except Exception as e:
-            print(f"键盘监听器启动失败: {e}")
 
     def setup_drag_functionality(self):
         """设置窗口拖动功能"""

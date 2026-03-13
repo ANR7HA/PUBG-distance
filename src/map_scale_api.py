@@ -80,18 +80,15 @@ class MapScaleAPI:
             self.value_change_callback(self.current_value, self.scale_type)
 
     def on_mouse_scroll(self, x, y, dx, dy):
-        """鼠标滚轮事件处理 - 使用pynput全局钩子，可在游戏中使用"""
-        try:
-            if self.all_actions_enabled is None or not self.all_actions_enabled:
-                return
+        """鼠标滚轮事件处理"""
+        # 检查外部变量是否启用所有动作
+        if self.all_actions_enabled is None or not self.all_actions_enabled:
+            return
 
-            scroll_threshold = 1
-            if dy > scroll_threshold:
-                self.zoom_in()
-            elif dy < -scroll_threshold:
-                self.zoom_out()
-        except Exception as e:
-            print(f"滚轮事件处理错误: {e}")
+        if dy > 0:  # 向上滚动，放大（数值变小）
+            self.zoom_in()
+        else:  # 向下滚动，缩小（数值变大）
+            self.zoom_out()
 
     def zoom_in(self):
         """放大（数值变小）"""
@@ -144,14 +141,14 @@ class MapScaleAPI:
         self.value_change_callback = callback
 
     def start_mouse_listener(self):
-        """启动鼠标监听 - 使用pynput全局钩子，可在游戏中使用"""
-        def start_listener():
-            try:
-                with mouse.Listener(on_scroll=self.on_mouse_scroll) as listener:
-                    listener.join()
-            except Exception as e:
-                print(f"鼠标监听器错误: {e}")
+        """启动鼠标监听"""
 
+        def start_listener():
+            self.mouse_listener = mouse.Listener(on_scroll=self.on_mouse_scroll)
+            self.mouse_listener.start()
+            self.mouse_listener.join()  # 等待监听器结束
+
+        # 创建并启动新线程
         mouse_thread = threading.Thread(target=start_listener, daemon=True)
         mouse_thread.start()
 
